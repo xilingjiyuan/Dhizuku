@@ -19,7 +19,7 @@ jobs:
         uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: 17
+          java-version: 21
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -34,9 +34,16 @@ jobs:
             echo "artifact=$repo-$version"
           } >> $GITHUB_ENV
 
-      - name: Set signing config
+      - name: Set signing config & convert keystore
         run: |
-            printf '%s' '${{ secrets.STORE_FILE }}' | base64 -d > keystore/r0s.jks
+            mkdir -p keystore
+            printf '%s' '${{ secrets.STORE_FILE }}' | base64 -d > keystore/r0s_old.jks
+            # 自动将旧版 jks 转换为 Java 21 完全兼容的标准格式，彻底解决 Tag number over 30 报错
+            keytool -importkeystore \
+              -srckeystore keystore/r0s_old.jks -srcstorepass "${{ secrets.STORE_PASS }}" \
+              -destkeystore keystore/r0s.jks -deststoretype PKCS12 \
+              -deststorepass "${{ secrets.STORE_PASS }}" -destkeypass "${{ secrets.KEY_PASS }}" -noprompt || cp keystore/r0s_old.jks keystore/r0s.jks
+            
             {
               echo "storeFile=r0s.jks"
               echo "storePassword=${{ secrets.STORE_PASS }}"
@@ -56,7 +63,7 @@ jobs:
 
       - name: Build APKS
         run: |
-          keytool -changealias -keystore keystore/r0s.jks -alias "${{ secrets.KEY_ALIAS }}" -destalias "${GITHUB_REPOSITORY_OWNER}" -storepass "${{ secrets.STORE_PASS }}" -keypass "${{ secrets.KEY_PASS }}"
+          keytool -changealias -keystore keystore/r0s.jks -alias "${{ secrets.KEY_ALIAS }}" -destalias "${GITHUB_REPOSITORY_OWNER}" -storepass="${{ secrets.STORE_PASS }}" -keypass="${{ secrets.KEY_PASS }}"
           curl -sL --fail-with-body https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar -o bundletool.jar
           java -jar bundletool.jar build-apks --bundle="${{ env.artifact }}.aab" --output="${{ env.artifact }}.apks" --ks="keystore/r0s.jks" --ks-pass="pass:${{ secrets.STORE_PASS }}" --ks-key-alias="${GITHUB_REPOSITORY_OWNER}" --key-pass="pass:${{ secrets.KEY_PASS }}"
 
